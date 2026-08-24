@@ -2,7 +2,7 @@
 
 > **项目名称**：智能实验室数字孪生与不可篡改履历系统 (Smart Lab Digital Twin System)  
 > **远程仓库**：[https://github.com/zl1713033678/Lab_Device_System](https://github.com/zl1713033678/Lab_Device_System)  
-> **文档版本**：v2.0-Milestone  
+> **文档版本**：v2.1-ProductionReady  
 > **更新日期**：2026-08-24  
 
 ---
@@ -45,10 +45,56 @@
 | **2** | 启动后终端显示日志，界面感觉“卡住了” | Uvicorn 属于阻塞型服务进程，此前未在 Python 端自动打开浏览器。 | 在 [main.py](file:///e:/code/Lab_Device_System/main.py) 增加延迟自动调用系统默认浏览器的后台线程。 |
 | **3** | 前端按钮全部失效、数据显示为 0 | `<script>` 顶部变量声明重复，触发 JS 语法错误中止了整段脚本解析。 | 清理重复声明，经 Node.js 全量语法校验确保 0 报错，全面恢复全站交互。 |
 | **4** | Git 远程同步挂起超时 | 无交互子终端环境下无法弹出 GitHub 登录认证界面。 | 编写一键同步脚本 [sync_to_github.bat](file:///e:/code/Lab_Device_System/sync_to_github.bat)，通过前台交互顺利完成推送。 |
+| **5** | 新电脑 Clone 缺失运行依赖与环境 | 仓库缺少 requirements 规范，新机运行可能缺少第三方库。 | 引入 [requirements.txt](file:///e:/code/Lab_Device_System/requirements.txt) 并升级 [run.bat](file:///e:/code/Lab_Device_System/run.bat) 支持开箱自动创建 venv 与补齐依赖。 |
 
 ---
 
-## 三、 系统运行与启动指南
+## 三、 换新电脑 Clone 后的全自动补全与自愈机制
+
+针对更换电脑后通过 `git clone` 运行项目的场景，系统已建立 **四层全自动补全闭环**：
+
+```
+                 [新电脑 git clone 仓库]
+                           │
+                           ▼
+                 [双击运行 run.bat]
+                           │
+         ┌─────────────────┴─────────────────┐
+         ▼                                   ▼
+ [检测到缺失 .venv 虚拟环境]          [已存在 .venv 环境]
+         │                                   │
+ 1. 自动执行 python -m venv .venv            │
+ 2. 自动 pip install -r requirements.txt      │
+ 3. 依赖全自动补齐完毕                       │
+         └─────────────────┬─────────────────┘
+                           ▼
+                  [启动 main.py 后端]
+                           │
+         ┌─────────────────┴─────────────────┐
+         ▼                                   ▼
+ [检测到缺失 lab_devices.db 数据库]    [已存在数据库]
+         │                                   │
+ 1. 自动建表 (init_db)                       │
+ 2. 自动预置 1F 房间与测试设备               │
+         └─────────────────┬─────────────────┘
+                           ▼
+            [后台自动唤起系统浏览器访问]
+               http://localhost:8000
+```
+
+1. **Python 运行环境与依赖自动补齐**：
+   - 依赖清单 [requirements.txt](file:///e:/code/Lab_Device_System/requirements.txt) 规范了系统必需库；
+   - 脚本 [run.bat](file:///e:/code/Lab_Device_System/run.bat) 具备环境自愈能力，新电脑首次运行会自动创建 `.venv` 并静默安装所有运行依赖。
+2. **SQLite 数据库自愈初始化**：
+   - [main.py](file:///e:/code/Lab_Device_System/main.py) 内置数据库自愈逻辑，首次启动自动创建 `lab_devices.db` 并预置 1F 房间与测试设备，无需手动导入 SQL 文件。
+3. **前端资源即开即用**：
+   - 静态资源与动态 SVG 平面图完整托管在 Git 仓库中，clone 即可直接加载。
+4. **服务与浏览器全自动联动**：
+   - 服务启动成功后，无需人工输入网址，后台自动打开默认浏览器。
+
+---
+
+## 四、 系统运行与启动指南
 
 ### 1. 独立程序运行（无需 Python 环境）
 直接双击运行：
@@ -57,7 +103,7 @@ E:\code\Lab_Device_System\dist\SmartLabSystem.exe
 ```
 > 启动后系统将自动唤起默认浏览器并打开 `http://localhost:8000`。
 
-### 2. 源码脚本运行
+### 2. 源码脚本运行（支持新电脑全自动初始化）
 双击运行：
 ```
 E:\code\Lab_Device_System\run.bat
@@ -72,10 +118,13 @@ E:\code\Lab_Device_System\run.bat
 
 ---
 
-## 四、 核心代码资产索引
+## 五、 核心代码资产索引
 
-- **后端主服务**：[main.py](file:///e:/code/Lab_Device_System/main.py)（FastAPI 路由、WebSocket 广播、SQLite 数据库、PyInstaller 兼容）
-- **前端页面与 SVG 平面图**：[static/index.html](file:///e:/code/Lab_Device_System/static/index.html)（SVG 矢量蓝图、双向联动控制器、抽屉面板、审计报表）
+- **后端主服务**：[main.py](file:///e:/code/Lab_Device_System/main.py)（FastAPI 路由、WebSocket 广播、SQLite 数据库自愈、PyInstaller 兼容、浏览器自动唤起）
+- **前端页面与 SVG 平面图**：[static/index.html](file:///e:/code/Lab_Device_System/static/index.html)（SVG 矢量蓝图、双向联动控制器、抽屉面板、审计报表、名称重命名与绑定）
+- **依赖清单文件**：[requirements.txt](file:///e:/code/Lab_Device_System/requirements.txt)（Python 第三方依赖标准定义）
 - **硬件采样端代码**：[esp32/main/main.ino](file:///e:/code/Lab_Device_System/esp32/main/main.ino)（ESP32 固件逻辑）
 - **硬件模拟端脚本**：[simulate_esp32.py](file:///e:/code/Lab_Device_System/simulate_esp32.py)（本地多设备遥测模拟器）
 - **打包配置文件**：[SmartLabSystem.spec](file:///e:/code/Lab_Device_System/SmartLabSystem.spec)
+- **环境自愈与启动脚本**：[run.bat](file:///e:/code/Lab_Device_System/run.bat)
+- **GitHub 一键同步脚本**：[sync_to_github.bat](file:///e:/code/Lab_Device_System/sync_to_github.bat)
