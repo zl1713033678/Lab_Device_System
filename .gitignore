@@ -1,35 +1,27 @@
-# Python
+# Python artifacts
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
-venv/
-.venv/
-ENV/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# PyInstaller / Build outputs
 build/
 dist/
-*.manifest
-*.spec.bak
+*.egg-info/
+*.egg
 
-# SQLite & Data Files
-*.db
-*.sqlite3
-*.log
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
 
-# IDE & OS
-.idea/
+# IDE & Editor configs
 .vscode/
+.idea/
 *.swp
 *.swo
-.DS_Store
-Thumbs.db
 
-# Temp scripts
-_temp_*
+# Logs & temp
+*.log
+*.db
+

@@ -1,30 +1,33 @@
 @echo off
-chcp 65001 >nul
-title æ™ºèƒ½å®éªŒå®¤æ•°å­—å­ªç”Ÿä¸ä¸å¯ç¯¡æ”¹å±¥å†ç³»ç»Ÿ
+title ÖÇÄÜÊµÑéÊÒÊı×ÖÂÏÉúÓë²»¿É´Û¸ÄÂÄÀúÏµÍ³
+
+cd /d "%~dp0"
 
 echo ===================================================
-echo   æ­£åœ¨å¯åŠ¨ æ™ºèƒ½å®éªŒå®¤æ•°å­—å­ªç”Ÿä¸ä¸å¯ç¯¡æ”¹å±¥å†ç³»ç»Ÿ...
+echo   ÕıÔÚÆô¶¯ ÖÇÄÜÊµÑéÊÒÊı×ÖÂÏÉúÓë²»¿É´Û¸ÄÂÄÀúÏµÍ³...
 echo ===================================================
 
-set VENV_DIR=%~dp0.venv
-set PYTHON_EXE=
+:: 1. ¼ì²é Python ĞéÄâ»·¾³
+if exist "%~dp0.venv\Scripts\python.exe" goto START_SERVER
 
-if not exist "%VENV_DIR%\Scripts\python.exe" (
-    echo [æ£€æµ‹åˆ°ç¯å¢ƒæœªåˆå§‹åŒ–] æ­£åœ¨ä¸ºæ‚¨è‡ªåŠ¨åˆ›å»º Python è™šæ‹Ÿç¯å¢ƒ...
-    python -m venv "%VENV_DIR%" 2>nul || py -m venv "%VENV_DIR%" 2>nul
-    if not exist "%VENV_DIR%\Scripts\python.exe" (
-        echo [é”™è¯¯] æœªèƒ½åœ¨å½“å‰ç”µè„‘æ‰¾åˆ° Python ç¯å¢ƒï¼Œè¯·å…ˆå®‰è£… Python 3.10+ å¹¶åŠ å…¥ PATH ç¯å¢ƒå˜é‡ã€‚
-        pause
-        exit /b 1
-    )
-    echo [æ­£åœ¨è‡ªåŠ¨è¡¥å…¨ä¾èµ–] æ­£åœ¨ä» requirements.txt å®‰è£…è¿è¡Œæ‰€éœ€åº“...
-    "%VENV_DIR%\Scripts\pip.exe" install -r "%~dp0requirements.txt"
-    echo [ç¯å¢ƒåˆå§‹åŒ–å®Œæˆ]
-)
+echo [1/2] Ê×´ÎÔËĞĞ£ºÕıÔÚÎªÄú×Ô¶¯´´½¨ .venv ĞéÄâ»·¾³...
+python -m venv "%~dp0.venv" 2>nul
+if not exist "%~dp0.venv\Scripts\python.exe" py -m venv "%~dp0.venv" 2>nul
 
-set PYTHON_EXE="%VENV_DIR%\Scripts\python.exe"
+if not exist "%~dp0.venv\Scripts\python.exe" goto ENV_ERROR
 
-echo [å¯åŠ¨ä¸­] æ­£åœ¨å¯åŠ¨ FastAPI åç«¯æœåŠ¡ (http://localhost:8000)...
-%PYTHON_EXE% main.py
+echo [1/2] Ê×´ÎÔËĞĞ£ºÕıÔÚ°²×°ÔËĞĞËùĞèÒÀÀµ...
+"%~dp0.venv\Scripts\pip.exe" install -r "%~dp0requirements.txt"
+goto START_SERVER
+
+:ENV_ERROR
+echo [´íÎó] Î´ÄÜÕÒµ½ Python »·¾³£¬ÇëÏÈ°²×° Python 3.10+ ²¢¼ÓÈë PATH »·¾³±äÁ¿¡£
+pause
+exit /b 1
+
+:START_SERVER
+echo [2/2] ÕıÔÚÆô¶¯ FastAPI ºó¶Ë·şÎñ²¢×Ô¶¯´ò¿ªÍøÒ³ (http://localhost:8000)...
+start "" "http://localhost:8000"
+"%~dp0.venv\Scripts\python.exe" "%~dp0main.py"
 
 pause

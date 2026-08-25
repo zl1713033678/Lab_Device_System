@@ -1,5 +1,6 @@
 #include <Wire.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Adafruit_GFX.h>
@@ -9,8 +10,14 @@
 const char* WIFI_SSID = "木工所实验中心";
 const char* WIFI_PASS = "caf888888";
 
-// 你的电脑局域网 IP (注意: 端口 8000)
-const char* SERVER_URL = "http://10.21.11.27:8000/api/v1/telemetry/ingest";
+// 局域网服务域名 (mDNS 自动寻址，电脑 IP 随意变动均可自动捕获)
+const char* MDNS_HOST = "smartlab"; 
+
+// 备用降级静态 IP (当个别路由器禁止 mDNS 组播时自动降级生效)
+const char* FALLBACK_SERVER_IP = "10.21.11.76";
+const int SERVER_PORT = 8000;
+
+// 设备物理唯一编号 (与网页实验室空间绑定，永不失效)
 const char* DEVICE_CODE = "DEV-ESP32-001";
 
 // 引脚定义
@@ -24,6 +31,11 @@ const char* DEVICE_CODE = "DEV-ESP32-001";
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
+// 动态解析获得的服务端 URL
+String currentServerUrl = "";
+IPAddress resolvedServerIP;
+unsigned long lastMDNSSearch = 0;
+
 // 辅助函数：清屏并在 OLED 展现 4 行文字
 void showOLED(String line1, String line2, String line3, String line4) {
   display.clearDisplay();
@@ -36,6 +48,30 @@ void showOLED(String line1, String line2, String line3, String line4) {
   display.setCursor(0, 48);  display.println(line4);
   
   display.display();
+}
+
+// 自动探测并解析电脑服务端 IP (mDNS 自动寻址)
+bool updateServerEndpoint(bool forceSearch) {
+  if (!forceSearch && currentServerUrl.length() > 0 && (millis() - lastMDNSSearch < 60000)) {
+    return true;
+  }
+
+  Serial.println(F("[mDNS] 正在局域网搜索 smartlab.local 电脑端..."));
+  IPAddress hostIp = MDNS.queryHost(MDNS_HOST, 1500);
+
+  if (hostIp != INADDR_NONE && hostIp.toString() != "0.0.0.0") {
+    resolvedServerIP = hostIp;
+    currentServerUrl = "http://" + resolvedServerIP.toString() + ":" + String(SERVER_PORT) + "/api/v1/telemetry/ingest";
+    Serial.printf("[mDNS] 成功捕获电脑服务端最新 IP: %s\n", resolvedServerIP.toString().c_str());
+    lastMDNSSearch = millis();
+    return true;
+  } else {
+    // 降级回退到备用默认 IP
+    currentServerUrl = "http://" + String(FALLBACK_SERVER_IP) + ":" + String(SERVER_PORT) + "/api/v1/telemetry/ingest";
+    Serial.printf("[mDNS] 未搜索到 smartlab.local，使用备用端点: %s\n", currentServerUrl.c_str());
+    lastMDNSSearch = millis();
+    return false;
+  }
 }
 
 void setup() {
@@ -67,8 +103,17 @@ void setup() {
 
   String localIP = WiFi.localIP().toString();
   Serial.println("\nWiFi 连接成功! IP: " + localIP);
-  showOLED("WiFi Connected!", "IP: " + localIP, "Server: Ready", "System Running!");
-  delay(1500);
+  
+  // 4. 启动 mDNS 响应器并首次解析服务端电脑
+  if (MDNS.begin("esp32-sensor")) {
+    Serial.println(F("[mDNS] 客户端 mDNS 模块启动就绪"));
+  }
+  
+  showOLED("WiFi Connected!", "IP: " + localIP, "Searching Server", "smartlab.local...");
+  updateServerEndpoint(true);
+
+  showOLED("Smart Lab Twin", "IP: " + localIP, "Server: Ready", "System Running!");
+  delay(1200);
 }
 
 void loop() {
@@ -117,8 +162,12 @@ void loop() {
 
   // 6. 通过 HTTP POST 发送数据给电脑端 FastAPI
   if (WiFi.status() == WL_CONNECTED) {
+    if (currentServerUrl.length() == 0) {
+      updateServerEndpoint(false);
+    }
+
     HTTPClient http;
-    http.begin(SERVER_URL);
+    http.begin(currentServerUrl);
     http.addHeader("Content-Type", "application/json");
 
     // 构建 JSON 报文
@@ -142,7 +191,9 @@ void loop() {
     if (httpResponseCode > 0) {
       Serial.printf("上报成功 | 状态: %s | 差值: %d | HTTP: %d\n", status_str.c_str(), diff, httpResponseCode);
     } else {
-      Serial.printf("上报失败, 错误代码: %s\n", http.errorToString(httpResponseCode).c_str());
+      Serial.printf("上报失败, 错误代码: %s，触发 mDNS 重新探测电脑...\n", http.errorToString(httpResponseCode).c_str());
+      // 连续失败时触发 mDNS 重新探测电脑新 IP
+      updateServerEndpoint(true);
     }
     http.end(); // 释放连接
   }

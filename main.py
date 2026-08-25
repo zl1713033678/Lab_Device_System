@@ -5,14 +5,18 @@ import json
 import os
 import shutil
 import struct
+import sys
+import threading
+import webbrowser
 import zlib
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import Column, DateTime, Integer, String, create_engine, inspect, text
@@ -610,19 +614,13 @@ def generate_default_cad_floorplan(filepath: str, width: int = 1200, height: int
         f.write(png_header + ihdr_chunk + idat_chunk + iend_chunk)
 
 
-# ------------------------------------------------------------------
-# 8. FastAPI 路由初始化与静态资源挂载
-# ------------------------------------------------------------------
-app = FastAPI(title="实验室设备数字孪生与不可篡改履历系统")
-
-
-@app.on_event("startup")
-async def init_data():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     check_and_migrate_db()
     os.makedirs("static/assets", exist_ok=True)
     
     # 启动后台硬件心跳断电巡检检测任务
-    asyncio.create_task(heartbeat_checker_loop())
+    heartbeat_task = asyncio.create_task(heartbeat_checker_loop())
     
     target_floorplan = "static/assets/floorplan.png"
     if not os.path.exists(target_floorplan):
@@ -635,69 +633,169 @@ async def init_data():
             generate_default_cad_floorplan(target_floorplan)
 
     db = SessionLocal()
+    try:
+        if db.query(RoomModel).count() == 0:
+            rooms = [
+                RoomModel(name="302", pos_x="70%", pos_y="23%"),
+                RoomModel(name="701", pos_x="63%", pos_y="11%"),
+                RoomModel(name="203", pos_x="25%", pos_y="47%"),
+            ]
+            db.add_all(rooms)
+            db.commit()
 
-    if db.query(RoomModel).count() == 0:
-        rooms = [
-            RoomModel(name="302", pos_x="70%", pos_y="23%"),
-            RoomModel(name="701", pos_x="63%", pos_y="11%"),
-            RoomModel(name="203", pos_x="25%", pos_y="47%"),
-        ]
-        db.add_all(rooms)
-        db.commit()
+        if db.query(DeviceModel).count() == 0:
+            devs = [
+                DeviceModel(
+                    device_code="DEV-001",
+                    name="测试设备 1",
+                    room_name="302",
+                    status=DeviceStatus.FAULT.value,
+                    pos_x="20%",
+                    pos_y="25%",
+                ),
+                DeviceModel(
+                    device_code="DEV-002",
+                    name="测试设备 2",
+                    room_name="701",
+                    status=DeviceStatus.FAULT.value,
+                    pos_x="65%",
+                    pos_y="25%",
+                ),
+                DeviceModel(
+                    device_code="DEV-003",
+                    name="测试设备 3",
+                    room_name="302",
+                    status=DeviceStatus.FAULT.value,
+                    pos_x="25%",
+                    pos_y="65%",
+                ),
+                DeviceModel(
+                    device_code="DEV-004",
+                    name="测试设备 4",
+                    room_name="302",
+                    status=DeviceStatus.FAULT.value,
+                    pos_x="70%",
+                    pos_y="65%",
+                ),
+            ]
+            db.add_all(devs)
+            db.commit()
 
-    if db.query(DeviceModel).count() == 0:
-        devs = [
-            DeviceModel(
-                device_code="DEV-001",
-                name="测试设备 1",
-                room_name="302",
-                status=DeviceStatus.FAULT.value,
-                pos_x="20%",
-                pos_y="25%",
-            ),
-            DeviceModel(
-                device_code="DEV-002",
-                name="测试设备 2",
-                room_name="701",
-                status=DeviceStatus.FAULT.value,
-                pos_x="65%",
-                pos_y="25%",
-            ),
-            DeviceModel(
-                device_code="DEV-003",
-                name="测试设备 3",
-                room_name="302",
-                status=DeviceStatus.FAULT.value,
-                pos_x="25%",
-                pos_y="65%",
-            ),
-            DeviceModel(
-                device_code="DEV-004",
-                name="测试设备 4",
-                room_name="302",
-                status=DeviceStatus.FAULT.value,
-                pos_x="70%",
-                pos_y="65%",
-            ),
-        ]
-        db.add_all(devs)
-        db.commit()
+            now = datetime.now()
+            logs = [
+                DeviceUsageLogModel(
+                    device_code="DEV-001",
+                    previous_status="IDLE",
+                    new_status="IN_USE",
+                    operator="张博士",
+                    source_type="MANUAL_WEB",
+                    raw_data=json.dumps({"action": "start", "current": 1.5}),
+                    timestamp=now - timedelta(days=2, hours=5),
+                ),
+            ]
+            db.add_all(logs)
+            db.commit()
+    finally:
+        db.close()
 
-        now = datetime.now()
-        logs = [
-            DeviceUsageLogModel(
-                device_code="DEV-001",
-                previous_status="IDLE",
-                new_status="IN_USE",
-                operator="张博士",
-                source_type="MANUAL_WEB",
-                raw_data=json.dumps({"action": "start", "current": 1.5}),
-                timestamp=now - timedelta(days=2, hours=5),
-            ),
-        ]
-        db.add_all(logs)
-        db.commit()
-    db.close()
+    # 启动 mDNS 局域网主机名广播 (smartlab.local)
+    zeroconf_instance = None
+    try:
+        from zeroconf import Zeroconf, ServiceInfo
+        import socket
+        
+        all_ips = []
+        try:
+            hostname = socket.gethostname()
+            for ip in socket.gethostbyname_ex(hostname)[2]:
+                if not ip.startswith("127.") and ip not in all_ips:
+                    all_ips.append(ip)
+        except Exception:
+            pass
+        
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            out_ip = s.getsockname()[0]
+            s.close()
+            if out_ip not in all_ips and not out_ip.startswith("127."):
+                all_ips.insert(0, out_ip)
+        except Exception:
+            pass
+
+        all_ips.sort(key=lambda x: 0 if (x.startswith("10.") or x.startswith("192.168.")) else 1)
+        if not all_ips:
+            all_ips = ["127.0.0.1"]
+            
+        primary_ip = all_ips[0]
+
+        desc = {'path': '/api/v1/telemetry/ingest'}
+        info = ServiceInfo(
+            "_http._tcp.local.",
+            "smartlab._http._tcp.local.",
+            addresses=[socket.inet_aton(ip) for ip in all_ips],
+            port=8000,
+            properties=desc,
+            server="smartlab.local.",
+        )
+        zeroconf_instance = Zeroconf()
+        zeroconf_instance.register_service(info)
+        print(f"[mDNS] 局域网主机名服务已就绪: smartlab.local:8000 (首选 IP: {primary_ip}, 全部 IP: {all_ips})")
+    except Exception as e:
+        print(f"[mDNS] 局域网服务广播跳过: {e}")
+
+    yield
+
+    # 优雅关闭后台任务与 mDNS 服务
+    heartbeat_task.cancel()
+    if zeroconf_instance:
+        try:
+            zeroconf_instance.unregister_all_services()
+            zeroconf_instance.close()
+        except Exception:
+            pass
+
+
+# ------------------------------------------------------------------
+# 8. FastAPI 路由初始化与静态资源挂载
+# ------------------------------------------------------------------
+app = FastAPI(title="实验室设备数字孪生与不可篡改履历系统", lifespan=lifespan)
+
+
+@app.get("/api/v1/system/info")
+def get_system_info():
+    """获取当前宿主机局域网 IP 与硬件接入配置指引"""
+    import socket
+    all_ips = []
+    try:
+        hostname = socket.gethostname()
+        for ip in socket.gethostbyname_ex(hostname)[2]:
+            if not ip.startswith("127.") and ip not in all_ips:
+                all_ips.append(ip)
+    except Exception:
+        pass
+
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        out_ip = s.getsockname()[0]
+        s.close()
+        if out_ip not in all_ips and not out_ip.startswith("127."):
+            all_ips.insert(0, out_ip)
+    except Exception:
+        pass
+
+    all_ips.sort(key=lambda x: 0 if (x.startswith("10.") or x.startswith("192.168.")) else 1)
+    primary_ip = all_ips[0] if all_ips else "127.0.0.1"
+
+    return {
+        "lan_ip": primary_ip,
+        "all_ips": all_ips,
+        "port": 8000,
+        "mdns_host": "smartlab.local",
+        "telemetry_url": f"http://{primary_ip}:8000/api/v1/telemetry/ingest",
+        "ws_url": f"ws://{primary_ip}:8000/ws/devices"
+    }
 
 
 @app.get("/api/v1/hardware/status")
@@ -1396,33 +1494,63 @@ def export_usage_excel():
         db.close()
 
 
-import sys
-import threading
-import webbrowser
-
 # 动态定位静态资源根目录（兼容源码运行与 PyInstaller _MEIPASS 打包环境）
 BASE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 if not os.path.exists(STATIC_DIR):
     STATIC_DIR = os.path.abspath("static")
 
+@app.get("/", response_class=HTMLResponse)
+def serve_root_index():
+    """实时读取最新 static/index.html 并强制下发 No-Cache 标头，杜绝浏览器缓存"""
+    index_file = os.path.join(STATIC_DIR, "index.html")
+    with open(index_file, "r", encoding="utf-8") as f:
+        content = f.read()
+    return HTMLResponse(
+        content=content,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
+
+@app.get("/index.html", response_class=HTMLResponse)
+def serve_index_file():
+    """显式分发 index.html 带有 No-Cache 响应头"""
+    index_file = os.path.join(STATIC_DIR, "index.html")
+    with open(index_file, "r", encoding="utf-8") as f:
+        content = f.read()
+    return HTMLResponse(
+        content=content,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static_dir")
-app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 def open_browser_delayed():
     import time
-    time.sleep(1.2)
+    time.sleep(0.8)
     try:
-        webbrowser.open("http://localhost:8000")
+        # Windows 原生 start 命令唤起默认浏览器，100% 激活置顶
+        os.system("start http://localhost:8000")
     except Exception:
-        pass
+        try:
+            os.startfile("http://localhost:8000")
+        except Exception:
+            try:
+                webbrowser.open("http://localhost:8000")
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     import uvicorn
     # 启动后台线程自动打开浏览器，避免用户误认为服务卡死
     threading.Thread(target=open_browser_delayed, daemon=True).start()
     
-    if getattr(sys, 'frozen', False):
-        uvicorn.run(app, host="0.0.0.0", port=8000, ws="websockets")
-    else:
-        uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, ws="websockets")
+    # 采用单进程直启模式，保证 Ctrl+C 时干净彻底释放端口与进程
+    uvicorn.run(app, host="0.0.0.0", port=8000, ws="auto")
