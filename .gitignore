@@ -25,3 +25,7 @@ ENV/
 *.log
 *.db
 
+# Docs archive
+docs/_archive/
+旧文档/
+
